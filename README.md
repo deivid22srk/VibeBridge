@@ -97,6 +97,56 @@ VibeBridge stops working if you close it.
 - Check workspace info (`get_workspace_info`) and bridge health (`vscode_status`)
 - **Remember your project across sessions** (`MEMORY.md` in your workspace root)
 
+## Conectar ao OpenCode (provedor OpenCode)
+
+A partir da v0.2.0 a VibeBridge também pode usar um **[OpenCode](https://github.com/deivid22srk/opencode-termux)** como "modelo": o OpenCode roda como servidor HTTP local (ou na rede) e a extensão controla **tudo** pela interface — conversar, ler/criar/editar arquivos, executar comandos, ferramentas, agentes, sessões, MCP, permissões e cancelamento. Nesse modo a bridge Python e o VSCode **não são necessários**: quem executa as ferramentas é o próprio OpenCode, no diretório de projeto dele.
+
+### Passo 1 — Instale e inicie o OpenCode
+
+No **Termux (Android)**, um único comando instala tudo (Bun oficial para Android, repositório, dependências e o comando `opencode`):
+
+```bash
+pkg install -y curl && curl -fsSL https://raw.githubusercontent.com/deivid22srk/opencode-termux/dev/install-termux.sh | bash
+```
+
+Em qualquer Linux (PC, servidor ou WSL), o mesmo script também funciona:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deivid22srk/opencode-termux/dev/install-termux.sh | bash
+```
+
+Inicie o servidor dentro da pasta do seu projeto (ou use `?directory` pelo painel):
+
+```bash
+opencode serve --port 4096                                   # mesmo aparelho
+OPENCODE_SERVER_PASSWORD="uma-senha" opencode serve --port 4096 --hostname 0.0.0.0   # visível na rede, com senha
+```
+
+### Passo 2 — Conecte a extensão
+
+1. Instale/carregue a extensão (`vibebridge-extension/`) como de costume.
+2. Clique no ícone da VibeBridge e abra **"▲ OpenCode panel"**.
+3. Em **⚙ Server**, configure:
+   - **Server URL**: `http://127.0.0.1:4096` (OpenCode no mesmo aparelho) ou `http://IP:4096` (outra máquina/celular — a extensão pede permissão de acesso ao host);
+   - **Project directory**: caminho absoluto do projeto **na máquina onde o OpenCode roda** (no Termux: `/data/data/com.termux/files/home/seu-projeto`);
+   - **Password**: o valor de `OPENCODE_SERVER_PASSWORD`, se você definiu um.
+4. Clique em **Save & connect**. O dot verde indica conexão; o OpenCode fica offline? Rode `opencode serve` e use **↻ Reconnect**.
+
+### O que o painel faz
+
+- **Sessões**: criar (＋ New), listar, retomar (clique) e apagar (✕);
+- **Prompts com streaming** de resposta em tempo real;
+- **Chamadas de ferramentas** como chips (spinning → verde ok / vermelho erro) com input/output ao clicar;
+- **Pedidos de permissão** do OpenCode: Allow once / Always allow / Deny, direto no painel;
+- **Perguntas do agente** (opções/resposta customizada);
+- **Troca de modelo/provedor e agente** (o que o OpenCode já tem configurado);
+- **Comandos custom** do OpenCode (`/command`) com `$ARGUMENTS`;
+- **Status dos servidores MCP** configurados no OpenCode;
+- **Anexo de arquivos** ao prompt e botão **■ Stop** para interromper;
+- **Reconexão automática** com backoff, aviso claro quando o servidor está offline e timeouts em todas as chamadas.
+
+> Detalhes técnicos da integração (API usada, decisões de design) estão em [`ANALISE.md`](ANALISE.md). As mudanças feitas no OpenCode estão em [`CHANGES.md`](https://github.com/deivid22srk/opencode-termux/blob/dev/CHANGES.md).
+
 ## Panel status
 
 | Dot | Meaning |
