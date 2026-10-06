@@ -14,17 +14,24 @@ function render(s) {
   const tools = document.getElementById("tools");
   const servers = document.getElementById("servers");
   const list = s.servers || [];
+  const isOc = s.mode === "opencode";
+  document.body.classList.toggle("mode-opencode", isOc);
+  document.getElementById("executor").value = isOc ? "opencode" : "vscode";
   const up = list.filter((x) => x.alive).length;
   const mcpOk = s.connected && (s.mcpAlive || up > 0 || s.tools > 0);
   const studioOff = mcpOk && s.studio === false; // MCP up but no Studio attached
   const ok = mcpOk && !studioOff;
   dot.className = "dot " + (s.connected ? (ok ? "on" : "warn") : "");
-  state.textContent = s.connected
-    ? (ok ? "Connected · VSCode ready"
-        : studioOff ? "VSCode not connected · start its MCP server (Cmd+Shift+P)"
-        : "Bridge OK · open VSCode")
-    : "Bridge offline";
-  tools.textContent = s.connected ? `${s.tools || 0} tools available` : "Run bridge.py";
+  state.textContent = isOc
+    ? (s.connected
+        ? "Connected · OpenCode ready"
+        : `OpenCode offline${s.ocError ? " · " + s.ocError : ""}`)
+    : (s.connected
+        ? (ok ? "Connected · VSCode ready"
+            : studioOff ? "VSCode not connected · start its MCP server (Cmd+Shift+P)"
+            : "Bridge OK · open VSCode")
+        : "Bridge offline");
+  tools.textContent = s.connected ? `${s.tools || 0} tools available` : (isOc ? "Start the OpenCode server" : "Run bridge.py");
   servers.textContent = s.connected
     ? list.map((x) => `${x.alive ? "●" : "○"} ${x.id} (${x.alive ? x.tools + " tools" : "down"})`).join("\n")
     : "";
@@ -68,5 +75,35 @@ document.getElementById("opencode").addEventListener("click", () => {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "zs-status") render(msg);
 });
+
+// ── Agent backend settings (site-driven mode) ─────────────────────────────
+// Persisted in chrome.storage.local; the background worker refreshes its cache
+// via storage.onChanged, and the content scripts key their prompt/feedback off
+// the zs-status `mode` the worker broadcasts. Saving takes effect immediately,
+// no reload needed (the NEXT command/prompt uses the new backend).
+const execSel = document.getElementById("executor");
+const ocUrl = document.getElementById("ocUrl");
+const ocPass = document.getElementById("ocPass");
+
+chrome.storage.local.get(["zsToolExecutor", "zsOpenCodeUrl", "zsOpenCodePassword"], (r) => {
+  execSel.value = r && r.zsToolExecutor === "opencode" ? "opencode" : "vscode";
+  document.body.classList.toggle("mode-opencode", execSel.value === "opencode");
+  ocUrl.value = (r && r.zsOpenCodeUrl) || "http://127.0.0.1:4096";
+  ocPass.value = (r && r.zsOpenCodePassword) || "";
+});
+
+function saveExecutor() {
+  const mode = execSel.value === "opencode" ? "opencode" : "vscode";
+  document.body.classList.toggle("mode-opencode", mode === "opencode");
+  chrome.storage.local.set({
+    zsToolExecutor: mode,
+    zsOpenCodeUrl: ocUrl.value.trim() || "http://127.0.0.1:4096",
+    zsOpenCodePassword: ocPass.value,
+  });
+}
+execSel.addEventListener("change", saveExecutor);
+ocUrl.addEventListener("change", saveExecutor);
+ocPass.addEventListener("change", saveExecutor);
+
 refresh();
 setInterval(refresh, 2000);

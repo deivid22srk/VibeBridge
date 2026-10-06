@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "VibeBridge Free × VSCode Agent",
-  "version": "0.2.0",
-  "description": "Turn ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena or Meta AI into a VSCode agent that drives VSCode through a local bridge — plus a native OpenCode provider panel.",
+  "version": "0.3.0",
+  "description": "Turn ChatGPT, DeepSeek, Gemini, Kimi, GLM, Qwen, Arena or Meta AI into a coding agent — tools run on VSCode (bridge) or on an OpenCode server — plus a native OpenCode provider panel.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://chat.deepseek.com/*",

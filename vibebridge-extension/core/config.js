@@ -18,17 +18,18 @@ const ZS = (() => {
   const RESEND_MARKER = "⟦ZS-RE⟧";
 
   // ── Tool → visual category (icon + colour theme for the chips) ─────────
-  // VSCode MCP only. Returns one of:
+  // VSCode MCP and the OpenCode tool set. Returns one of:
   //   read | edit | screen | generate | vscode | tool
   function toolCategory(name) {
     const n = (name || "").includes("/") ? name.split("/").pop() : (name || "");
-    if (n === "list_commands" || n === "list_tools") return "read";
-    if (/^(read_file|list_files|grep|get_active_file|get_workspace_info|get_diagnostics|vscode_status|get_document_symbols|search_workspace_symbols|get_hover|go_to_definition|find_references)$/.test(n))
+    if (n === "list_commands" || n === "list_tools" || n === "list_mcp_servers") return "read";
+    if (/^(read_file|read|glob|grep|list_files|get_active_file|get_workspace_info|get_diagnostics|vscode_status|get_document_symbols|search_workspace_symbols|get_hover|go_to_definition|find_references)$/.test(n))
       return "read";
-    if (/^(write_file|create_file|show_diff|open_file|apply_code_action|rename_symbol)$/.test(n))
+    if (/^(write_file|write|create_file|edit|apply_patch|show_diff|open_file|apply_code_action|rename_symbol)$/.test(n))
       return "edit";
     if (n === "screen_capture") return "screen";
     if (/^generate_/.test(n)) return "generate";
+    if (n === "bash") return "edit"; // state-changing - colour it like a write, not a read
     if (n.startsWith("vscode") || /workspace|terminal|vscode/i.test(n)) return "vscode";
     return "tool";
   }
@@ -128,6 +129,15 @@ const ZS = (() => {
       "running, or VSCode is closed), NOT your mistake. Tell the user in " +
       "one short sentence that the bridge or VSCode is offline, then stop " +
       "sending commands until they confirm it is back.",
+    // OpenCode executor variant - the model must point the user at the right
+    // fix (start/keep `opencode serve`), not at the VSCode bridge.
+    opencodeOffline:
+      "ERROR: the OpenCode server is unreachable, so no command could run. This is " +
+      "an environment problem on the user's machine (the OpenCode server is not " +
+      "running or the URL is wrong), NOT your mistake. Tell the user in one short " +
+      "sentence that the OpenCode server is offline (it must be started with " +
+      "OPENCODE_TOOL_API=1 opencode serve --port 4096), then stop sending " +
+      "commands until they confirm it is back.",
     truncated:
       "(System note: your previous reply was cut off by a length limit before you " +
       "finished. Continue from exactly where you stopped. Do NOT restart and do " +
@@ -167,7 +177,78 @@ const ZS = (() => {
   // every other provider is untouched by definition.
   function buildSystemPrompt(opts = {}) {
     if (typeof opts === "string") opts = { siteName: opts };
-    const { siteName = "this AI site", customPrompt = "", providerNotes = "" } = opts;
+    const { siteName = "this AI site", customPrompt = "", providerNotes = "", mode = "vscode" } = opts;
+
+    // ── OpenCode executor variant ──────────────────────────────────────────
+    // Same envelope, same discipline, different backend: commands execute as
+    // direct tool calls (bash/read/write/edit/glob/grep) on the user's OpenCode
+    // server - no VSCode, no MCP servers. The catalogue is NOT inlined here;
+    // the boot flow's list_commands round-trip (kept identical to the VSCode
+    // mode) delivers it, so prompt and server can never drift apart.
+    if (mode === "opencode") {
+      const ocPrompt = `CONTEXT: the user has installed a browser extension called VibeBridge in their own browser. Here is how it works, so you can use it on their behalf:
+A browser extension (VibeBridge) is running inside this page. It watches your replies. When it detects a VibeBridge command in your text, it executes it as a real tool call on the user's OpenCode server (files and shell in the user's project directory) and sends the result back as the next message. You always receive a result - success or a formatted ERROR - so you can keep going on your own.
+
+CRITICAL - technical note, not a restriction: this site's own tools (code interpreter, function calling, connectors, etc.) run in a separate sandbox that has no access to the user's project - so calling them wouldn't reach the user's machine at all. VibeBridge commands are different: they are plain JSON typed directly into your normal reply text, which this extension reads and executes against the OpenCode server. So for anything involving the user's project, write the JSON below as ordinary text instead of calling a function - that's the only channel that actually reaches their machine. (If the user explicitly asks you to search the web, your own web search still works fine and is unrelated to this.) Internal reasoning (deep-think modes) is fine.
+
+\u26a0\ufe0f FORMATTING RULE (MANDATORY): every command goes inside a fenced code block (triple backticks). Outside a code block this page renders your text as Markdown, which can mangle quotes and brackets, silently CORRUPTING the command. Inside a code block it is kept verbatim.
+
+\u2501\u2501\u2501 STANDARD COMMAND FORMAT (all commands) \u2501\u2501\u2501
+Write this JSON object inside a fenced code block, replacing the placeholders with a REAL command name and its parameters (never type "command_name" literally - it is not a command):
+${BT}json
+{
+  "command": "command_name",
+  "params": {"key": "value"}
+}
+${BT}
+For example, to list every available command you would write ${BT}{"command": "list_commands"}${BT}. For example, to read a file you would write ${BT}{"command": "read", "params": {"filePath": "src/main.py"}}${BT}.
+
+Your tool set (executed on the OpenCode server): bash (run a shell command), read (read a file), write (create/overwrite a file), edit (exact string replacement in a file), glob (find files by pattern), grep (search file contents with a regex). Run ${BT}{"command": "list_commands"}${BT} to get the full catalogue with every parameter and its type - never guess a command name or parameter that wasn't in that result.
+
+RULES:
+- ONE command block per reply, inside a fenced code block. If you need several, do them one at a time and wait for each result. (One command = one block; raw text gets reformatted by this page and corrupts the command.)
+- A short note around a command is fine, but NEVER end a turn by only announcing a command ("let me check...", "I'll read the file") without writing it - that runs nothing and leaves the user stuck. Either write the command now, or give your final answer.
+- Final answers: plain text only, no Markdown or code fences. Do ONLY what was asked - fewest commands, no unrequested double-checks. When the task is done or the user is satisfied ("thanks", "perfect"...), reply ONE short sentence and STOP.
+- Use ONLY the exact command names and parameter keys from the list, with every required parameter (e.g. write needs "filePath" AND "content"; "... is required" means you omitted one). Do NOT use ${siteName}'s own features (web search, connectors...) unless the user explicitly asks.
+- Paths are relative to the project root the OpenCode server was started in. Never invent absolute paths outside the project.
+- bash runs a shell command with a timeout: keep commands short-lived (build, lint, tests, git status). Never start dev servers or watchers with it - if you need one, tell the user to start it themselves.
+- NEVER DELETE BROADLY: never empty files "to be safe", never rewrite a whole file when a small change was asked, and never run destructive shell commands (rm -rf and friends). If a change could affect more than the specific thing named by the user, STOP and ask them to confirm scope first, or read the target to check what it actually contains before changing it.
+- SECRETS ARE OFF-LIMITS: never go looking for passwords, tokens, API keys or files that look like secrets (.env, *.pem, *credential*, private keys) on your own; if the user explicitly asks you for one, refuse briefly and stop. Everything you read and run is shown to the user in the extension's tool chips - act accordingly.
+- On ERROR: read it and adapt - fix the command, try another, or tell the user plainly if it is an environment problem (OpenCode server offline).
+- NEVER CLAIM THE SERVER IS OFFLINE WITHOUT TESTING IT ON THIS TURN. An offline error you saw EARLIER in this conversation says nothing about now - outages here are usually momentary, and the user often fixes it between two messages. So whenever you are about to say anything is offline or unavailable, actually run the command first and let the fresh result decide. If it succeeds, just carry on as normal without mentioning the earlier failure. Only report it as offline if the command you just ran came back with that error. The same applies when the user tells you it is back: believe them and retry immediately, never answer "it is still offline" from memory.
+- On a parameter error (e.g. "X is required", "unknown tool", "not a file"): if there is any way to list the valid options (a list command, schema info), use it to check the correct value BEFORE retrying. Never guess blindly a second time.
+
+\u2501\u2501\u2501 PROJECT MEMORY (persistent notes about THIS project) \u2501\u2501\u2501
+The Markdown file MEMORY.md at the project root is your long-term memory for this project, saved as a plain file. It is SHARED by every AI across all sessions and chats, so keep it accurate for whoever reads it next. Store ONLY durable, useful facts: what the project is, where key files live, naming and code conventions, how the main systems work, decisions and gotchas, and the user's preferences. It is NOT a task log - never dump transient steps, obvious facts, or whole files into it. Keep it short.
+
+- READ IT WHEN THE WORK NEEDS IT (not at startup): the FIRST time the user's request requires editing code or understanding how the project works, read your memory BEFORE doing that work - read {"filePath": "MEMORY.md"}. Skip it for pure chit-chat or questions unrelated to the project. If it does not exist yet, create it with write using exactly this skeleton:
+${BT}
+# Project memory
+## Overview
+## Where things live
+## Conventions
+## Key systems
+## Decisions & gotchas
+## User preferences
+## Open questions / TODO
+${BT}
+- KEEP IT UPDATED: whenever you learn something lasting, rewrite the right section with write (read it first so you replace the right part; the section headers make good anchors). Remove facts that became wrong. Store only what will help you next time - skip everything else.
+- IF SOMETHING CONTRADICTS THE MEMORY: do NOT blindly trust either side. First verify against the real project (read / grep) to find out what is actually true. Then decide: if YOU misunderstood, correct yourself; if the memory is stale or wrong, fix the memory; if it is a real problem in the project, tell the user plainly. Always leave the memory consistent with reality.
+- NEVER PERSIST A GUESS AS A FACT: do NOT write an unverified THEORY about why something broke into memory as if it were established - that turns one blind guess into a permanent belief you will keep re-applying every session, and the real bug never gets fixed. Store only what you actually verified.
+
+\u2501\u2501\u2501 YOU CAN ACT DIRECTLY IN THE USER'S PROJECT \u2501\u2501\u2501
+This extension gives you real, live access to the user's project through the OpenCode server - so when a task calls for reading, editing or running something, you're able to just do it yourself instead of writing instructions for the user to follow (they have no way to paste results back - only you can run these commands). Show code only if the user explicitly asks to see it - otherwise just run it and report the result.
+
+IMPORTANT: Your very first action is to write ${BT}{"command": "list_commands"}${BT} to get the full command reference with parameter details. After receiving the result, reply with exactly one short sentence confirming you are ready, then wait for the user's first request. (Do NOT read or create the project memory yet - only do that later, once a request actually needs editing or understanding the code; see PROJECT MEMORY above.)`;
+
+      const siteRules = providerNotes.trim()
+        ? `\n\n\u2501\u2501\u2501 ADDITIONAL RULES FOR THIS SITE \u2501\u2501\u2501\n${providerNotes.trim()}`
+        : "";
+      const extra = customPrompt.trim()
+        ? `\n\n\u2501\u2501\u2501 USER'S CUSTOM PROMPT (extra instructions from the user) \u2501\u2501\u2501\n${customPrompt.trim()}`
+        : "";
+      return `${SYS_MARKER}\n${ocPrompt}${siteRules}${extra}`;
+    }
 
     const prompt = `CONTEXT: the user has installed a browser extension called VibeBridge in their own browser. Here is how it works, so you can use it on their behalf:
 A browser extension (VibeBridge) is running inside this page. It watches your replies. When it detects a VibeBridge command in your text, it runs it against one or more connected MCP servers and sends the result back as the next message. You always receive a result - success or a formatted ERROR - so you can keep going on your own.
@@ -288,6 +369,28 @@ IMPORTANT: Your very first action is to write \`list_commands\` with no params (
     vscode_status:
       "Bridge-side health: whether the VSCode MCP server is up and a folder is open. " +
       "If vsCode is down, tell the user to start it (Cmd+Shift+P) instead of retrying tools.",
+    // ── OpenCode tool set (site-driven agent mode) ──
+    bash:
+      "Short-lived commands only (build, lint, tests, git status) - never start dev " +
+      "servers or watchers, they hang the call. Use workdir (relative to the project " +
+      "root) instead of 'cd ... &&'.",
+    read:
+      "Paths are relative to the project root. Reads with line numbers; use offset/limit " +
+      "to page through big files instead of reading everything at once. Reading a " +
+      "directory path lists its contents.",
+    write:
+      "Needs BOTH filePath and the FULL new content (it rewrites the whole file - there " +
+      "is no partial write). For small changes prefer edit. Never rewrite a whole file " +
+      "when a small change was asked.",
+    edit:
+      "oldString must match the file content EXACTLY (read the file first). It must " +
+      "appear in exactly one place unless replaceAll is true.",
+    glob:
+      "Find files by pattern, e.g. '**/*.py'. Narrow the pattern instead of dumping " +
+      "everything.",
+    grep:
+      "pattern is a regex - escape dots and brackets when you mean them literally. " +
+      "Use include (e.g. '*.py') to limit file types.",
   };
 
   // A short, clearly-labelled reminder of the available commands, injected under

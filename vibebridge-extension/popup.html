@@ -17,6 +17,13 @@
     .ghost { background: rgba(255,255,255,0.08); color: #e8e8ec; }
     .ghost:hover { background: rgba(45,212,191,0.16); }
     code { background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px; }
+    .cfg { margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 8px; }
+    .cfg label { display: block; font-size: 10.5px; opacity: 0.7; margin: 6px 0 2px; }
+    .cfg select, .cfg input { width: 100%; box-sizing: border-box; padding: 5px; border: 0; border-radius: 6px;
+      background: rgba(255,255,255,0.08); color: #e8e8ec; font-size: 11.5px; }
+    .ocrow { display: none; }
+    body.mode-opencode .ocrow { display: block; }
+    .hint { font-size: 9.5px; opacity: 0.55; margin-top: 6px; line-height: 1.35; }
   </style>
 </head>
 <body>
@@ -29,6 +36,20 @@
     <button class="ghost" id="restart">⟳ Restart VSCode server</button>
     <button class="ghost" id="opencode">▲ OpenCode panel</button>
     <button class="ghost" id="settings">⚙ Settings</button>
+    <div class="cfg">
+      <label>Agent backend (sites like DeepSeek)</label>
+      <select id="executor">
+        <option value="vscode">VSCode (bridge.py)</option>
+        <option value="opencode">OpenCode server</option>
+      </select>
+      <div class="ocrow">
+        <label>OpenCode server URL</label>
+        <input id="ocUrl" type="text" placeholder="http://127.0.0.1:4096" />
+        <label>Password (if OPENCODE_SERVER_PASSWORD is set)</label>
+        <input id="ocPass" type="password" placeholder="" />
+      </div>
+      <div class="hint" id="ocHint">OpenCode mode: start the server with <code>OPENCODE_TOOL_API=1 opencode serve --port 4096</code>, then chat on any supported AI site — the tools run on OpenCode.</div>
+    </div>
     <div class="row" style="margin-top:10px; opacity:0.6">
       Run <code>start.bat</code> and open <b>VSCode</b>, then go to a supported AI.
       Or connect to an <b>OpenCode</b> server with the OpenCode panel.

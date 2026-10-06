@@ -7,8 +7,58 @@
 // Contract with content.js: every sendMessage ALWAYS gets a response object,
 // even when the bridge is offline. The agentic loop must never hang waiting.
 
+importScripts("opencode-agent-tools.js");
+
 const PORT = 17613;
 const URL = `ws://127.0.0.1:${PORT}`;
+
+// ── OpenCode agent mode (fork tool API) ────────────────────────────────
+// Executor selector for the SITE-driven agent ("chat on DeepSeek, tools run
+// elsewhere"): "vscode" = the classic bridge.py → VSCode MCP path; "opencode"
+// = direct tool execution against an `opencode serve` instance (the fork's
+// /tool API). Settings live in chrome.storage.local so both the popup and the
+// content scripts can read/write them; this worker caches them and refreshes
+// on storage changes.
+let executor = "vscode";          // "vscode" | "opencode"
+let ocBase = ZSOpenCodeTools.DEFAULT_BASE;
+let ocPassword = "";
+let ocUsername = "";
+// Health probe cache: the popup polls status every 2s and the content script
+// poll mirrors it - probing the server that often is rude and pointless.
+let ocHealth = { ok: false, error: "not probed yet", at: 0, tools: 0 };
+const OC_HEALTH_TTL_MS = 5000;
+
+async function ocRefreshHealth(force) {
+  if (!force && Date.now() - ocHealth.at < OC_HEALTH_TTL_MS) return ocHealth;
+  const r = await ZSOpenCodeTools.probe(ocBase, { password: ocPassword, username: ocUsername });
+  ocHealth = { ...r, at: Date.now(), tools: ocHealth.tools };
+  return ocHealth;
+}
+
+function readOcSettings() {
+  try {
+    chrome.storage.local.get(["zsToolExecutor", "zsOpenCodeUrl", "zsOpenCodePassword", "zsOpenCodeUsername"], (r) => {
+      executor = r && r.zsToolExecutor === "opencode" ? "opencode" : "vscode";
+      ocBase = ZSOpenCodeTools.normalizeBase(r && r.zsOpenCodeUrl);
+      ocPassword = (r && r.zsOpenCodePassword) || "";
+      ocUsername = (r && r.zsOpenCodeUsername) || "";
+      ocHealth = { ...ocHealth, at: 0 }; // force a re-probe with the new settings
+    });
+  } catch (e) {
+    log("storage get failed", e);
+  }
+}
+readOcSettings();
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes.zsToolExecutor || changes.zsOpenCodeUrl || changes.zsOpenCodePassword || changes.zsOpenCodeUsername) {
+      readOcSettings();
+    }
+  });
+} catch (e) {
+  log("storage listener unavailable", e);
+}
 
 // Chat sites where a VibeBridge provider content script runs. Status pushes go
 // to every tab matching these. Add the new provider's URL pattern here (and in
@@ -286,7 +336,25 @@ function failAllPending(reason) {
 
 // ── status push to any open DeepSeek tab + popup ─────────────────────────
 function statusObj() {
-  return { type: "zs-status", connected, mcpAlive, studio: studioConnected, studioApp, studioProc, tools: toolsCache.length, servers: serversCache };
+  if (executor === "opencode") {
+    // Same shape the loop/popup already consume, fed from the OpenCode probe:
+    // connected = server reachable; mcpAlive=true so the UI treats tools as
+    // usable; servers carries the single "opencode" entry (the content script
+    // keys its mode off `mode`).
+    return {
+      type: "zs-status",
+      mode: "opencode",
+      connected: !!ocHealth.ok,
+      mcpAlive: !!ocHealth.ok,
+      studio: null,
+      studioApp: null,
+      studioProc: null,
+      tools: ocHealth.ok ? ZSOpenCodeTools.catalog().length : 0,
+      servers: [{ id: "opencode", alive: !!ocHealth.ok, tools: ocHealth.ok ? ZSOpenCodeTools.catalog().length : 0 }],
+      ocError: ocHealth.ok ? null : ocHealth.error,
+    };
+  }
+  return { type: "zs-status", mode: "vscode", connected, mcpAlive, studio: studioConnected, studioApp, studioProc, tools: toolsCache.length, servers: serversCache };
 }
 
 function broadcastStatus() {
@@ -301,10 +369,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     switch (msg.type) {
       case "status":
-        if (!connected) connect(); // self-heal after a worker wake-up
-        sendResponse(statusObj());
+        if (executor === "opencode") {
+          await ocRefreshHealth();
+          sendResponse(statusObj());
+        } else {
+          if (!connected) connect(); // self-heal after a worker wake-up
+          sendResponse(statusObj());
+        }
         break;
       case "list_tools": {
+        if (executor === "opencode") {
+          // Static, versioned with the extension - no network round-trip, so the
+          // boot catalogue lands instantly (the fork serves the same set).
+          await ocRefreshHealth();
+          sendResponse({ ok: true, tools: ZSOpenCodeTools.catalog() });
+          break;
+        }
         // Prefer a live refresh; fall back to cache so the loop never stalls.
         // 10s, not 25s: a catalogue request only blocks this long when one of the
         // MCP servers is dead (typically VSCode in a degraded, Blender-only
@@ -316,6 +396,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         break;
       }
       case "call_tool": {
+        if (executor === "opencode") {
+          const oc = await ZSOpenCodeTools.exec(msg.name, msg.arguments, {
+            base: ocBase,
+            password: ocPassword,
+            username: ocUsername,
+            timeoutMs: msg.timeout || ZSOpenCodeTools.DEFAULT_TIMEOUT_MS,
+          });
+          if (oc.ok) ocHealth = { ...ocHealth, ok: true, at: Date.now() };
+          else if (oc.kind === "disconnected") ocHealth = { ok: false, error: oc.error, at: Date.now() };
+          sendResponse(oc);
+          break;
+        }
         const timeout = (msg.timeout || 120000) + 10000;
         const r = await send(
           { type: "call_tool", name: msg.name, arguments: msg.arguments, timeout: msg.timeout },
@@ -344,6 +436,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       case "reconnect":
         reconnectDelay = RECONNECT_MIN;
+        if (executor === "opencode") {
+          await ocRefreshHealth(true);
+          broadcastStatus();
+          sendResponse({ ok: true });
+          break;
+        }
         connect();
         sendResponse({ ok: true });
         break;

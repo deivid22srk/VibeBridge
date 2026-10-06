@@ -18,6 +18,24 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (...a) => console.log("[vibebridge]", ...a);
 
+  // ── Executor selector (site-driven agent mode) ──────────────────────────
+  // "vscode" (default) = commands run on the bridge.py → VSCode MCP path.
+  // "opencode" = commands run directly on an OpenCode server (the fork's tool
+  // API): same envelope, same loop, different backend. Mirrored in background.js
+  // (which actually executes) and refreshed from every zs-status push + storage.
+  let EXECUTOR = "vscode";
+  try {
+    chrome.storage.local.get("zsToolExecutor", (r) => {
+      EXECUTOR = r && r.zsToolExecutor === "opencode" ? "opencode" : "vscode";
+    });
+  } catch {}
+  // Executor-aware offline feedback: the VSCode path blames the bridge and
+  // points at start.bat; the OpenCode path points at `opencode serve` - the
+  // model must tell the user the RIGHT fix for the backend actually in use.
+  function offlineFeedback() {
+    return EXECUTOR === "opencode" ? ZS.FEEDBACK.opencodeOffline : ZS.FEEDBACK.bridgeOffline;
+  }
+
   // ── Anti-bot mitigation (EXPERIMENTAL) ──────────────────────────────────
   // Suspected contributor to Arena's captcha: the agentic loop sends turns
   // back-to-back with near-zero, perfectly regular delay (~200ms settle),
@@ -909,6 +927,16 @@
     // merged tool count - a dead server must not borrow another's numbers).
     if (name === "list_mcp_servers") {
       await ensureTools();
+      if (EXECUTOR === "opencode") {
+        const s = A.bridge || {};
+        const oc = (s.servers || []).find((x) => x.id === "opencode");
+        return (
+          `Output of 'list_mcp_servers':\n` +
+          `Connected backends (1):\n` +
+          `- opencode: OpenCode (primary) - ${oc && oc.alive ? `${oc.tools || 0} commands available` : "offline"}\n` +
+          `There are no other backends. Use list_commands to see the exact commands.`
+        );
+      }
       const servers = (A.bridge && A.bridge.servers) || [];
       const lines = servers.length
         ? servers.map((sv) => {
@@ -927,14 +955,14 @@
     // if the model explicitly asks via {"server": "<id>"} (see list_mcp_servers).
     if (name === "list_commands" || name === "list_tools") {
       await ensureTools();
-      const requested = (args.server || "vscode").trim();
+      const requested = (args.server || (EXECUTOR === "opencode" ? "opencode" : "vscode")).trim();
       // The MCP proxy keeps advertising VSCode's catalogue even with no Studio
       // attached, so list_commands would hand back the full command list and read
       // as "VSCode is fine" - then every command silently fails. When VSCode is
       // actually unusable, short-circuit the DEFAULT (vscode) listing into a plain
       // "VSCode is down" note that points the model at the other server(s), so it
       // can keep working in degraded mode instead of firing dead VSCode commands.
-      if (requested === "vscode") {
+      if (requested === "vscode" && EXECUTOR !== "opencode") {
         const s = A.bridge || {};
         const srv = s.servers || [];
         const rbx = srv.find((x) => x.id === "vscode");
@@ -1024,7 +1052,7 @@
     let r = await Promise.race([bg({ type: "call_tool", name, arguments: args, timeout }), hardCap, stopWatch]);
     clearInterval(stopTimer);
     if (r && r.kind === "stopped") return "(stopped by user)";
-    if (!r) return ZS.FEEDBACK.bridgeOffline;
+    if (!r) return offlineFeedback();
     // The MCP server answers SUCCESSFULLY (ok:true) when no Studio is attached
     // (Studio closed / no place / MCP option disabled) - with an explanatory
     // text instead of a result. Surface it as a proper environment ERROR so the
@@ -1093,9 +1121,9 @@
       diag("bridge.staleExtension", { name, error: r.error });
       return ZS.FEEDBACK.staleExtension;
     }
-    if (r.kind === "disconnected") return ZS.FEEDBACK.bridgeOffline;
+    if (r.kind === "disconnected") return offlineFeedback();
     if (r.kind === "timeout") {
-      return `ERROR: tool '${name}' timed out after ${name === "execute_luau" ? 20 : 120}s.\n${r.error}\nTry a shorter/simpler call or check that VSCode is open and responsive.`;
+      return `ERROR: tool '${name}' timed out after ${name === "execute_luau" ? 20 : 120}s.\n${r.error}\nTry a shorter/simpler call or check that the backend (VSCode or the OpenCode server) is up and responsive.`;
     }
     if (name === "execute_luau") {
       const err = r.error || "";
@@ -1625,6 +1653,7 @@
       siteName: P.displayName,
       customPrompt: ui.getCustomPrompt(),
       providerNotes: P.promptExtra || "",
+      mode: EXECUTOR,
     });
   }
 
@@ -1827,8 +1856,21 @@
       // fall back to the tool catalogue check.
       const _srvs = (A.bridge && A.bridge.servers) || [];
       const _vs = _srvs.find((x) => x.id === "vscode");
-      const _vsUp = _srvs.length ? !!(_vs && _vs.alive) : A.toolList.length > 0;
+      // OpenCode mode: the single "opencode" entry IS the primary backend.
+      const _vsUp = EXECUTOR === "opencode"
+        ? _srvs.some((x) => x.alive)
+        : _srvs.length ? !!(_vs && _vs.alive) : A.toolList.length > 0;
       if (!A.toolList.length || !_vsUp) {
+        if (EXECUTOR === "opencode") {
+          ui.banner("warn", "OpenCode not ready",
+            "The OpenCode server is not reachable, so the agent cannot start. " +
+            "1) On the machine with the project, run it with the tool API enabled: " +
+            "OPENCODE_TOOL_API=1 opencode serve --port 4096 " +
+            "(add --hostname 0.0.0.0 if the browser runs on another device). " +
+            "2) Check the server URL in the popup. " +
+            "3) Back here, click Start again.");
+          return;
+        }
         ui.banner("warn", "VSCode not ready",
           "The VSCode MCP server is not connected, so the agent cannot start. " +
           "1) Open your project folder in VSCode (File > Open Folder) and trust it if asked. " +
@@ -1887,7 +1929,7 @@
       A.started = true;
       rememberSession(P.conversationKey()); // survives virtualization AND reloads
       ui.setStarted(true);
-      ui.toast(`Agent ready. Ask ${P.displayName} to build something in VSCode.`);
+      ui.toast(`Agent ready. Ask ${P.displayName} to build something in ${EXECUTOR === "opencode" ? "your project (via OpenCode)" : "VSCode"}.`);
     } catch (e) {
       if (alive()) ui.banner("warn", "Startup failed", String((e && e.message) || e));
     } finally {
@@ -3129,8 +3171,8 @@
       // Assistant Settings > MCP Servers inside the already-open Studio.
       const procUp = s.studioProc === true;
       let txt;
-      if (!s.connected) txt = "Bridge offline, run start.bat";
-      else if (!mcpOk) txt = "Bridge OK, open VSCode";
+      if (!s.connected) txt = EXECUTOR === "opencode" ? "OpenCode offline - start it with OPENCODE_TOOL_API=1 opencode serve" : "Bridge offline, run start.bat";
+      else if (!mcpOk) txt = EXECUTOR === "opencode" ? "OpenCode unreachable - check the server URL in the popup" : "Bridge OK, open VSCode";
       else if (noPlace) txt = "VSCode is open but no place is loaded - open a place";
       else if (noApp) txt = procUp
         ? "Studio is open but not connected - in Studio, open Assistant Settings > MCP Servers (or toggle its MCP server off/on)"
@@ -3198,7 +3240,9 @@
       // The setup steps live INSIDE this banner (not as a separate card) so it
       // can never overlap the alert - the previous standalone onboarding card did.
       b.innerHTML = `<div class="zs-banner-t">⚠ Lost connection to VibeBridge</div>
-        <div class="zs-banner-m">The VibeBridge bridge stopped on your PC. Restart it (run start.bat / MacOS_Start.command and keep VSCode open): the agent will reconnect automatically as soon as it is detected again.</div>
+        <div class="zs-banner-m">${EXECUTOR === "opencode"
+          ? "The OpenCode server stopped responding. Start it again (OPENCODE_TOOL_API=1 opencode serve --port 4096, or check the URL in the popup): the agent will reconnect automatically as soon as it is detected again."
+          : "The VibeBridge bridge stopped on your PC. Restart it (run start.bat / MacOS_Start.command and keep VSCode open): the agent will reconnect automatically as soon as it is detected again."}</div>
         <div class="zs-banner-acts"><button class="zs-banner-x">Close</button></div>`;
       b.querySelector(".zs-banner-x").addEventListener("click", () => { b.remove(); if (bridgeBannerEl === b) bridgeBannerEl = null; });
       root.appendChild(b);
@@ -3977,6 +4021,7 @@
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg && msg.type === "zs-status") {
+      if (msg.mode) EXECUTOR = msg.mode; // the worker is the source of truth
       ui.setStatus({ connected: msg.connected, mcpAlive: msg.mcpAlive, studio: msg.studio, studioApp: msg.studioApp, studioProc: msg.studioProc, tools: msg.tools, servers: msg.servers });
     }
     if (msg && msg.type === "zs-open-menu") {

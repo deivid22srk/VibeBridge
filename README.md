@@ -118,9 +118,12 @@ curl -fsSL https://raw.githubusercontent.com/deivid22srk/opencode-termux/dev/ins
 Inicie o servidor dentro da pasta do seu projeto (ou use `?directory` pelo painel):
 
 ```bash
-opencode serve --port 4096                                   # mesmo aparelho
-OPENCODE_SERVER_PASSWORD="uma-senha" opencode serve --port 4096 --hostname 0.0.0.0   # visível na rede, com senha
+OPENCODE_TOOL_API=1 opencode serve --port 4096                                # mesmo aparelho
+OPENCODE_SERVER_PASSWORD="uma-senha" OPENCODE_TOOL_API=1 opencode serve --port 4096 --hostname 0.0.0.0   # visível na rede, com senha
 ```
+
+(`OPENCODE_TOOL_API=1` habilita a API de ferramentas usada pelo modo
+"agente em sites" abaixo; o painel funciona igual com ou sem ela.)
 
 ### Passo 2 — Conecte a extensão
 
@@ -146,6 +149,37 @@ OPENCODE_SERVER_PASSWORD="uma-senha" opencode serve --port 4096 --hostname 0.0.0
 - **Reconexão automática** com backoff, aviso claro quando o servidor está offline e timeouts em todas as chamadas.
 
 > Detalhes técnicos da integração (API usada, decisões de design) estão em [`ANALISE.md`](ANALISE.md). As mudanças feitas no OpenCode estão em [`CHANGES.md`](https://github.com/deivid22srk/opencode-termux/blob/dev/CHANGES.md).
+
+## Modo agente em sites (DeepSeek, ChatGPT etc.) com OpenCode
+
+A partir da v0.3.0, além do painel, você pode usar a VibeBridge do jeito clássico — **conversando com a IA pela própria interface do site** (DeepSeek, ChatGPT, Gemini, Kimi, GLM, Qwen, Arena, Meta AI) — e as ferramentas executam **no OpenCode** em vez do VSCode: listar/ler/escrever/editar arquivos e rodar comandos como se o modelo do site fosse um modelo nativo do OpenCode.
+
+Como funciona:
+
+1. O modelo do site escreve um comando em JSON no reply (envelope `"command": ..., "params": ...`, dentro de um bloco de código — o mesmo protocolo de sempre);
+2. A extensão detecta e envia para o servidor OpenCode (`POST /tool/:name`);
+3. O resultado volta como a próxima mensagem no chat do site, e o modelo continua.
+
+Ferramentas disponíveis nesse modo: `bash`, `read`, `write`, `edit`, `glob`, `grep` — executadas no diretório de projeto do OpenCode, com I/O visível nos chips da extensão.
+
+### Como ativar
+
+1. Inicie o servidor com a API de ferramentas habilitada (na pasta do projeto):
+
+```bash
+OPENCODE_TOOL_API=1 opencode serve --port 4096
+```
+
+2. No **popup da VibeBridge**, em **Agent backend (sites like DeepSeek)**, escolha **OpenCode server**;
+3. Preencha a **URL** (`http://127.0.0.1:4096` se for no mesmo aparelho; `http://IP:4096` se o OpenCode roda em outro — ex.: no celular via Termux) e a senha, se houver;
+4. Abra o site da IA, clique em **Start** normalmente. O prompt de sistema enviado ao modelo é automaticamente o do modo OpenCode (sem referências a VSCode/MCP), e os comandos passam a executar lá.
+
+Notas:
+
+- A troca vale para a próxima sessão/comando — não precisa recarregar a página;
+- Para voltar ao modo VSCode, basta selecionar **VSCode (bridge.py)** de novo;
+- O modo VSCode continua sendo o padrão (nada muda para quem usa a bridge);
+- `OPENCODE_TOOL_API=1` executa as ferramentas **sem pedidos de permissão** do OpenCode — use a senha do servidor (`OPENCODE_SERVER_PASSWORD`) se ele estiver exposto na rede.
 
 ## Panel status
 

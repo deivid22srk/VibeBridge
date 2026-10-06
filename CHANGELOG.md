@@ -1,5 +1,33 @@
 # Changelog
 
+## VibeBridge fork (0.3.0)
+
+Site-driven agent mode with an OpenCode backend: keep chatting on the AI site
+(DeepSeek, ChatGPT, Gemini, Kimi, GLM, Qwen, Arena, Meta AI) exactly like the
+classic VSCode flow - but the tools now execute on an OpenCode server instead.
+
+### Added
+- `opencode-agent-tools.js`: pure, dependency-free client for the fork's
+  direct tool API (`GET /tool`, `POST /tool/:name`) with a static MCP-shaped
+  catalogue (bash, read, write, edit, glob, grep) mirroring the fork's tool
+  schemas; maps every failure to the loop's result contract
+  (ok/timeout/disconnected/error) and handles Basic-auth servers.
+- Agent backend selector in the popup ("VSCode (bridge.py)" vs "OpenCode
+  server" + URL/password), persisted in chrome.storage.local and picked up
+  live by the background worker.
+- background.js serves `list_tools`/`call_tool`/`status` from the OpenCode
+  backend when selected; the VSCode bridge path is untouched and stays the
+  default.
+- OpenCode variant of the system prompt (no VSCode/MCP references; same
+  command envelope, one-command-per-reply discipline and MEMORY.md flow),
+  selected automatically by the executor mode.
+- Executor-aware offline feedback/banners (the model tells the user to start
+  `OPENCODE_TOOL_API=1 opencode serve`, not start.bat) and an OpenCode-aware
+  boot gate + status line.
+- `test-opencode-agent-tools.js`: 42 node tests (catalogue vs the fork's
+  schemas, URL/auth helpers, response mapping with mocked fetch, optional
+  live checks against a running server).
+
 ## VibeBridge fork (0.1.0)
 
 Forked from ZeroScript Free 1.5.5 (GPL-3.0, credit: sebattfg). Extension,
