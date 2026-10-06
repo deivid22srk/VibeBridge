@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- opencode.html - VibeBridge × OpenCode control panel (extension page).
+     Opened from the popup ("OpenCode panel"). Talks directly to a running
+     `opencode serve` instance via opencode-api.js; no bridge.py involved. -->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>VibeBridge × OpenCode</title>
+  <link rel="stylesheet" href="opencode.css" />
+  <link rel="icon" href="icon.png" />
+</head>
+<body>
+  <header id="oc-header">
+    <span id="oc-dot" class="oc-dot" title="OpenCode connection status"></span>
+    <h1>VibeBridge × OpenCode</h1>
+    <span class="oc-ver" id="oc-ver"></span>
+    <span class="spacer"></span>
+    <button class="oc-btn" id="oc-btn-reconnect" title="Force reconnect to the OpenCode server">↻ Reconnect</button>
+    <button class="oc-btn" id="oc-btn-settings">⚙ Server</button>
+  </header>
+
+  <section id="oc-settings">
+    <div class="oc-grid">
+      <label>Server URL
+        <input id="oc-set-url" type="text" placeholder="http://127.0.0.1:4096" spellcheck="false" />
+      </label>
+      <label>Project directory (on the server machine, optional)
+        <input id="oc-set-dir" type="text" placeholder="e.g. /home/you/myproject or /data/data/com.termux/files/home/myproject" spellcheck="false" />
+      </label>
+      <label>Username (only if OPENCODE_SERVER_PASSWORD is set)
+        <input id="oc-set-user" type="text" placeholder="opencode" spellcheck="false" />
+      </label>
+      <label>Password (value of OPENCODE_SERVER_PASSWORD)
+        <input id="oc-set-pass" type="password" placeholder="" spellcheck="false" />
+      </label>
+    </div>
+    <div class="oc-hint">
+      Start the server with <code>opencode serve --port 4096</code> (Termux install:
+      see the opencode-termux README). If you set <code>OPENCODE_SERVER_PASSWORD</code>,
+      fill the password above. For a server on another machine, use its URL — the
+      extension will ask for permission to reach it.
+    </div>
+    <div style="margin-top:10px; display:flex; gap:8px">
+      <button class="oc-btn primary" id="oc-btn-save">Save &amp; connect</button>
+      <button class="oc-btn" id="oc-btn-close">Close</button>
+    </div>
+  </section>
+
+  <main id="oc-main">
+    <aside id="oc-side">
+      <div class="oc-side-head">
+        <span class="oc-side-title">Sessions</span>
+        <button class="oc-btn" id="oc-btn-new" title="Create a new session">＋ New</button>
+      </div>
+      <div id="oc-session-list"></div>
+      <div id="oc-mcp" title="MCP servers configured in OpenCode"></div>
+    </aside>
+
+    <section id="oc-chat">
+      <div id="oc-banner"></div>
+      <div id="oc-messages"></div>
+      <div id="oc-alerts"></div>
+
+      <div id="oc-composer">
+        <div class="oc-selects">
+          <select id="oc-model" title="Model used for the next prompt"><option value="">(session default model)</option></select>
+          <select id="oc-agent" title="Agent used for the next prompt"><option value="">(session default agent)</option></select>
+          <span class="spacer" style="flex:1"></span>
+          <button class="oc-btn" id="oc-btn-attach" title="Attach files to the next prompt">📎 Attach</button>
+          <input id="oc-file" type="file" multiple style="display:none" />
+        </div>
+        <div class="oc-row">
+          <textarea id="oc-input" rows="2"
+            placeholder="Ask OpenCode anything — it can read/edit files, run commands and use its tools in the project directory. Enter sends, Shift+Enter breaks a line."></textarea>
+          <button class="oc-btn primary" id="oc-btn-send">Send</button>
+          <button class="oc-btn stop" id="oc-btn-stop" style="display:none">■ Stop</button>
+        </div>
+        <div id="oc-attach-list"></div>
+        <div id="oc-cmdrow">
+          <span class="oc-cmd-label">Command:</span>
+          <select id="oc-cmd"><option value="">(custom commands)</option></select>
+          <input class="oc-cmd-args" id="oc-cmd-args" type="text" placeholder="$ARGUMENTS" spellcheck="false" />
+          <button class="oc-btn" id="oc-btn-cmd">Run</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="oc-toast"></div>
+
+  <script src="opencode-api.js"></script>
+  <script src="opencode-app.js"></script>
+</body>
+</html>

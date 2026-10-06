@@ -59,6 +59,12 @@ document.getElementById("settings").addEventListener("click", () => {
   });
 });
 
+// OpenCode provider: opens the dedicated control panel (extension page) that
+// talks straight to a running `opencode serve` instance. No bridge needed.
+document.getElementById("opencode").addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("opencode.html") });
+});
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "zs-status") render(msg);
 });
